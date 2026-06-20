@@ -22,7 +22,7 @@ pub const HASH_CHUNK: u8 = 0x05;
 /// Sends the number of chunks and the hash of the file
 pub const FILE_INFO: u8 = 0x02;
 /// Layout:
-/// 0x03 file_name
+/// 0x03 len file_name
 /// Asks the server for a file, done on the ephemeral port
 /// Server responds with FILE_INFO
 /// Client responds with GET again to begin download
@@ -39,3 +39,7 @@ pub const FAIL: u8 = 0xFF;
 /// 0x0B
 /// Sent back after download is finished and the full hash is verified to be correct or when the server closes the connection
 pub const BYE: u8 = 0x0B;
+/// Layout:
+/// 0x15
+/// Sent if the server is still compressing the file
+pub const WAIT: u8 = 0x15;

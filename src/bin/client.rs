@@ -24,6 +24,8 @@ fn main() -> std::io::Result<()> {
     let mut stream = TcpStream::connect(format!("{}:{}", ip, redirected_port))?;
     let mut get_packet = Vec::new();
     get_packet.push(GET);
+    let filename_len = filename.len();
+    get_packet.push(filename_len as u8);
     get_packet.extend_from_slice(filename.as_bytes());
     stream.write_all(&get_packet)?;
     Ok(())

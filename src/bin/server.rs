@@ -22,7 +22,11 @@ fn handle_client(mut first_stream: TcpStream) -> std::io::Result<()> {
     let mut buffer = [0; 128];
     stream.read(&mut buffer)?;
     let first_byte = buffer[0];
-    let filename = buffer[1];
+    let filename_len = buffer[1] as usize;
+    let start_index = 2;
+    let end_index = start_index + filename_len;
+    let filename_raw = &buffer[start_index..end_index];
+    let filename = String::from_utf8_lossy(&filename_raw);
     if first_byte == GET {
         println!("client requested {}", filename);
     } 
