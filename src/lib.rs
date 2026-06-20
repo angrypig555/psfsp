@@ -55,6 +55,10 @@ pub const NOTEXIST: u8 = 0x44;
 /// 0xAB len hash
 /// Sent after the download has been completed to verify the hash
 pub const HASH: u8 = 0xAB;
+/// Layout:
+/// Server sends: 0xAD
+/// Client sends: 0xAD len username len password
+pub const AUTH: u8 = 0xAD;
 
 /// Hashes a file, returns the hash as a string
 pub fn hash(path: &Path) -> String {

@@ -9,9 +9,9 @@ use std::thread;
 use std::sync::Arc;
 use std::net::Shutdown;
 
-use psfsp::{ACK, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
+use psfsp::{ACK, AUTH, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
 
-fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<String>>, shared_directory: Arc<PathBuf>) -> std::io::Result<()> {
+fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<String>>, shared_directory: Arc<PathBuf>, username: Arc<String>, password: Arc<String>) -> std::io::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:0")?;
     let new_port = listener.local_addr()?.port();
     println!("got new temp port {}", new_port);
@@ -24,9 +24,16 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
     let new_client_ip = client_addr.ip();
     if new_client_ip != client_ip {
         return  Err(Error::new(std::io::ErrorKind::PermissionDenied, "client attempted to connect that had a seperate ip from the initial one"));
-    }
+    }   
     println!("client succesfully verified on new port");
     let mut buffer = [0; 128];
+    stream.write_all(&[AUTH])?;
+    stream.read(&mut buffer)?;
+    let auth_first_byte = buffer[0];
+    if auth_first_byte != AUTH {
+        return Err(Error::new(std::io::ErrorKind::InvalidInput, "Client did not send an AUTH packet back"));
+    }
+    let username_len = u64::from_be_bytes(buffer[1..9].try_into().unwrap()) as usize;
     stream.read(&mut buffer)?;
     let first_byte = buffer[0];
     let filename_len = buffer[1] as usize;
@@ -84,11 +91,15 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        panic!("no arguments were provided\nusage:\nserver.exe [SHARED_DIRECTORY]");
+    if args.len() < 4 {
+        panic!("no arguments were provided\nusage:\nserver.exe [SHARED_DIRECTORY] [USERNAME] [PASSWORD]");
     }
     let shared_dir = PathBuf::from(&args[1]);
     let shared_dir_name_len = args[1].len() + 1;
+    let username = &args[2];
+    let password = &args[3];
+    let username_arc = Arc::new(String::from(username));
+    let password_arc = Arc::new(String::from(password));
     println!("server");
     println!("shared directory {:#?}", &shared_dir);
     println!("sharing everything inside of directory");
@@ -110,6 +121,8 @@ fn main() -> std::io::Result<()> {
         println!("got connection");
         let available_files_clone = Arc::clone(&available_files);
         let shared_dir_clone = Arc::clone(&shared_dir_arc);
+        let username_clone = Arc::clone(&username_arc);
+        let password_clone = Arc::clone(&password_arc);
         thread::spawn(|| {
             let mut stream = match stream {
                 Ok(s) => s,
@@ -135,7 +148,7 @@ fn main() -> std::io::Result<()> {
                 println!("client sent incorrect magic byte");
                 return;
             }
-            match handle_client(stream, available_files_clone, shared_dir_clone) {
+            match handle_client(stream, available_files_clone, shared_dir_clone, username_clone, password_clone) {
                 Ok(_) => println!("client has been served"),
                 Err(e) => eprintln!("{}", e),
             }
