@@ -10,7 +10,7 @@ pub const GREET: u8 = 0x11;
 /// Redirection from the server to an ephemeral port, contains the IP address as a string
 pub const REDIRECTED: u8 = 0x99;
 /// Layout:
-/// 0x01 data chunk_num
+/// 0x01 data
 /// Sends a 1 megabyte chunk of data, alongside the number of the chunk
 pub const DATA_CHUNK: u8 = 0x01;
 /// Layout:
@@ -18,7 +18,8 @@ pub const DATA_CHUNK: u8 = 0x01;
 /// Sends the hash for the chunk number
 pub const HASH_CHUNK: u8 = 0x05;
 /// Layout:
-/// 0x02 len_of_msg number_of_chunks full_hash
+/// 1 B   8B 
+/// 0x02 number_of_chunks len hash
 /// Sends the number of chunks and the hash of the file
 pub const FILE_INFO: u8 = 0x02;
 /// Layout:
@@ -43,3 +44,7 @@ pub const BYE: u8 = 0x0B;
 /// 0x15
 /// Sent if the server is still compressing the file
 pub const WAIT: u8 = 0x15;
+/// Layout:
+/// 0x44
+/// Sent if the requested file does not exist
+pub const NOTEXIST: u8 = 0x44;
