@@ -9,6 +9,8 @@ use std::io;
 use std::path::PathBuf;
 
 use psfsp::BYE;
+use psfsp::HASH;
+use psfsp::hash;
 use psfsp::{GET, GREET, NOTEXIST, ACK, FAIL};
 
 fn main() -> std::io::Result<()> {
@@ -91,6 +93,22 @@ fn main() -> std::io::Result<()> {
         stream.write_all(&[ACK])?;
     }
     fs::rename(downloaded_file, &downloaded_file_final_name)?;
+    println!("verifying hash");
+    let client_hash = hash(&downloaded_file_final_name);
+    stream.read(&mut buffer)?;
+    if buffer[0] != HASH {
+        println!("File was saved but the hash was not compared, procceed at your own risk");
+    }
+    let buf_len  = u64::from_be_bytes(buffer[1..9].try_into().unwrap()) as usize;
+    let end_index = 9 + buf_len;
+    let server_hash = &buffer[9..end_index];
+    let server_hash_string = String::from_utf8_lossy(server_hash);
+    println!("Downloaded file hash: {}\nHash from server: {}", client_hash, server_hash_string);
+    if client_hash != server_hash_string {
+        panic!("Hashes do not match, do not trust the downloaded file");
+    } else {
+        println!("Hashes verified")
+    }
     println!("Saved file to {}", downloaded_file_final_name.display());
     Ok(())
 }

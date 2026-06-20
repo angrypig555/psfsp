@@ -7,8 +7,9 @@ use std::path::Path;
 use std::collections::HashSet;
 use std::thread;
 use std::sync::Arc;
+use std::net::Shutdown;
 
-use psfsp::{ACK, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, NOTEXIST, REDIRECTED};
+use psfsp::{ACK, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
 
 fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<String>>, shared_directory: Arc<PathBuf>) -> std::io::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:0")?;
@@ -54,7 +55,7 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
         if buffer[0] != ACK {
             return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "Client denied download"));
         }
-        let mut file = File::open(requested_file)?;
+        let mut file = File::open(&requested_file)?;
         let mut f_buffer = vec![0u8; 1_048_576];
         loop {
             let bytes_read = file.read(&mut f_buffer)?;
@@ -65,7 +66,16 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
             stream.write_all(current_chunk)?;
             stream.read(&mut buffer)?;
         }
+        println!("calculating hash");
+        let hash_server = hash(&requested_file);
+        let hash_len = hash_server.len().to_be_bytes();
+        let mut hash_packet: Vec<u8> = Vec::new();
+        hash_packet.push(HASH);
+        hash_packet.extend(hash_len);
+        hash_packet.extend(hash_server.as_bytes());
         stream.write_all(&[BYE])?;
+        stream.write_all(&hash_packet)?;
+        stream.shutdown(Shutdown::Write)?;
     } else {
        return Err(Error::new(std::io::ErrorKind::InvalidData, "Invalid command"));
     }

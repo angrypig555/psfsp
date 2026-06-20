@@ -1,6 +1,9 @@
 // lib.rs - psfsp
 // defines the protocol bytes
 
+use std::{fs::File, io};
+use std::path::Path;
+
 /// Layout:
 /// 0x11
 /// Greets the server
@@ -48,3 +51,22 @@ pub const WAIT: u8 = 0x15;
 /// 0x44
 /// Sent if the requested file does not exist
 pub const NOTEXIST: u8 = 0x44;
+/// Layout:
+/// 0xAB len hash
+/// Sent after the download has been completed to verify the hash
+pub const HASH: u8 = 0xAB;
+
+/// Hashes a file, returns the hash as a string
+pub fn hash(path: &Path) -> String {
+    let mut file = match File::open(path) {
+        Ok(File) => File,
+        Err(e) => panic!("{}", e),
+    };
+    let mut hasher = blake3::Hasher::new();
+    match io::copy(&mut file, &mut hasher) {
+        Ok(_) => println!("hashed succesfully"),
+        Err(e) => {panic!("{}", e)},
+    }
+    let hash = hasher.finalize();
+    hash.to_hex().to_string()
+}
