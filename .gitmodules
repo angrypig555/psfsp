@@ -1,0 +1,3 @@
+[submodule "psfsp_gui"]
+	path = psfsp_gui
+	url = https://github.com/angrypig555/psfsp_gui
