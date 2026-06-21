@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 blake3 = "1.8.5"
+indicatif = "0.18.4"
 rcgen = "0.14.8"
 rustls = "0.23.40"
 rustls-pemfile = "2.2.0"

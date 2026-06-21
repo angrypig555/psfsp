@@ -13,7 +13,7 @@ use rcgen::generate_simple_self_signed;
 use rustls::{ServerConfig, ServerConnection, Stream};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-use psfsp::{ACK, AUTH, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, FAIL, hash};
+use psfsp::{ACK, AUTH, AVAILABLE, BYE, DATA_CHUNK, FAIL, FILE_INFO, FILE_METADATA, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
 
 fn cert_handler() -> ServerConfig {
     let home_dir = std::env::var("USERPROFILE") 
@@ -90,58 +90,88 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
     }
     stream.write_all(&[ACK])?;
     println!("authenticated succesfully");
-    stream.read(&mut buffer)?;
-    let first_byte = buffer[0];
-    let filename_len = buffer[1] as usize;
-    let start_index = 2;
-    let end_index = start_index + filename_len;
-    let filename_raw = &buffer[start_index..end_index];
-    let filename = String::from_utf8_lossy(&filename_raw);
-    if first_byte == GET {
-        println!("client requested {}", &filename);
-        if !available_files.contains(filename.as_ref()) {
-            stream.write_all(&[NOTEXIST])?;
-            return Err(Error::new(std::io::ErrorKind::InvalidFilename, "client requested a file that does not exist"));
-        }
-        let mut requested_file = (*shared_directory).clone();
-        requested_file.push(PathBuf::from(filename.to_string()));
-        println!("sending client {}", requested_file.display());
-        let metadata = fs::metadata(&requested_file)?;
-        let file_len = metadata.len();
-        let chunks = file_len;
-        let chunk_bytes: [u8; 8] = chunks.to_be_bytes();
-        let mut f_info_packet: Vec<u8> = Vec::new();
-        f_info_packet.push(FILE_INFO);
-        f_info_packet.extend(chunk_bytes);
-        stream.write_all(&f_info_packet)?;
+    loop {
         stream.read(&mut buffer)?;
-        if buffer[0] != ACK {
-            return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "Client denied download"));
-        }
-        let mut file = File::open(&requested_file)?;
-        let mut f_buffer = vec![0u8; 1_048_576];
-        loop {
-            let bytes_read = file.read(&mut f_buffer)?;
-            if bytes_read == 0 {
-                break
+        let first_byte = buffer[0];
+        if first_byte == GET {
+            let filename_len = buffer[1] as usize;
+            let start_index = 2;
+            let end_index = start_index + filename_len;
+            let filename_raw = &buffer[start_index..end_index];
+            let filename = String::from_utf8_lossy(&filename_raw);
+            println!("client requested {}", &filename);
+            if !available_files.contains(filename.as_ref()) {
+                stream.write_all(&[NOTEXIST])?;
+                return Err(Error::new(std::io::ErrorKind::InvalidFilename, "client requested a file that does not exist"));
             }
-            let current_chunk = &f_buffer[..bytes_read];
-            stream.write_all(current_chunk)?;
+            let mut requested_file = (*shared_directory).clone();
+            requested_file.push(PathBuf::from(filename.to_string()));
+            println!("sending client {}", requested_file.display());
+            let metadata = fs::metadata(&requested_file)?;
+            let file_len = metadata.len();
+            let chunks = file_len;
+            let chunk_bytes: [u8; 8] = chunks.to_be_bytes();
+            let mut f_info_packet: Vec<u8> = Vec::new();
+            f_info_packet.push(FILE_INFO);
+            f_info_packet.extend(chunk_bytes);
+            stream.write_all(&f_info_packet)?;
             stream.read(&mut buffer)?;
+            if buffer[0] != ACK {
+                return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "Client denied download"));
+            }
+            let mut file = File::open(&requested_file)?;
+            let mut f_buffer = vec![0u8; 51200];
+            loop {
+                let bytes_read = file.read(&mut f_buffer)?;
+                if bytes_read == 0 {
+                    break
+                }
+                let current_chunk = &f_buffer[..bytes_read];
+                stream.write_all(current_chunk)?;
+                stream.read(&mut buffer)?;
+                if buffer[0] != ACK {
+                    return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "Client aborted download"));
+                }
+            }
+            println!("calculating hash");
+            let hash_server = hash(&requested_file);
+            let hash_len = hash_server.len().to_be_bytes();
+            let mut hash_packet: Vec<u8> = Vec::new();
+            hash_packet.push(HASH);
+            hash_packet.extend(hash_len);
+            hash_packet.extend(hash_server.as_bytes());
+            stream.write_all(&hash_packet)?;
+        } else if first_byte == AVAILABLE {
+            println!("client requested available files");
+            let num_of_files = available_files.len() as u64;
+            let mut ack_packet = Vec::new();
+            ack_packet.push(ACK);
+            ack_packet.extend_from_slice(&num_of_files.to_be_bytes());
+            stream.write_all(&ack_packet)?;
+            for file in available_files.iter() {
+                let mut file_info = Vec::new();
+                file_info.push(FILE_METADATA);
+                let mut requested_file = PathBuf::new();
+                requested_file.push(&**shared_directory);
+                requested_file.push(file);
+                let metadata = fs::metadata(&requested_file)?;
+                let file_len = metadata.len();
+                file_info.extend_from_slice(&file_len.to_be_bytes());
+                let filename_len = file.len() as u64;
+                file_info.extend_from_slice(&filename_len.to_be_bytes());
+                file_info.extend_from_slice(&file.as_bytes());
+                stream.write_all(&file_info)?;
+                stream.read(&mut buffer)?;
+            }
+
+        } else if first_byte == BYE {
+            println!("client finished session");
+            break
+        } else {
+            return Err(Error::new(std::io::ErrorKind::InvalidData, "Invalid command"));
         }
-        println!("calculating hash");
-        let hash_server = hash(&requested_file);
-        let hash_len = hash_server.len().to_be_bytes();
-        let mut hash_packet: Vec<u8> = Vec::new();
-        hash_packet.push(HASH);
-        hash_packet.extend(hash_len);
-        hash_packet.extend(hash_server.as_bytes());
-        stream.write_all(&[BYE])?;
-        stream.write_all(&hash_packet)?;
-        rawstream.shutdown(Shutdown::Write)?;
-    } else {
-       return Err(Error::new(std::io::ErrorKind::InvalidData, "Invalid command"));
     }
+    rawstream.shutdown(Shutdown::Write)?;
     Ok(())
 }
 

@@ -59,6 +59,15 @@ pub const HASH: u8 = 0xAB;
 /// Server sends: 0xAD 0x00 (no auth) / 0x01 (user/pass)
 /// Client sends: 0xAD len username len password
 pub const AUTH: u8 = 0xAD;
+/// Layout:
+/// 0xAD
+/// Server responds with ack and the number of files and after that the available files along with their sizes, with a file metadata packet
+pub const AVAILABLE: u8 = 0xA2;
+/// Layout:
+/// 0x65 SIZE len FILENAME
+/// 1 byte - 8 bytes - 8 bytes - len
+/// Client responds with ACK
+pub const FILE_METADATA: u8 = 0x65;
 
 /// Hashes a file, returns the hash as a string
 pub fn hash(path: &Path) -> String {
