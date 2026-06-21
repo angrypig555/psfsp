@@ -1,0 +1,6 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "./Cargo.toml",
+    "./psfsp_gui/src-tauri/Cargo.toml"
+  ]
+}

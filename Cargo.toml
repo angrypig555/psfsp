@@ -10,3 +10,9 @@ rcgen = "0.14.8"
 rustls = "0.23.40"
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.14.1"
+
+[workspace]
+members = [
+    ".",
+    "psfsp_gui/src-tauri" 
+]
