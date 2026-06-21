@@ -56,7 +56,7 @@ pub const NOTEXIST: u8 = 0x44;
 /// Sent after the download has been completed to verify the hash
 pub const HASH: u8 = 0xAB;
 /// Layout:
-/// Server sends: 0xAD
+/// Server sends: 0xAD 0x00 (no auth) / 0x01 (user/pass)
 /// Client sends: 0xAD len username len password
 pub const AUTH: u8 = 0xAD;
 

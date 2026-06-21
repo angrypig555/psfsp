@@ -1,5 +1,5 @@
 use std::fs::{File, Metadata};
-use std::io::{Error, prelude::*};
+use std::io::{BufReader, Error, prelude::*};
 use std::net::{TcpListener, TcpStream};
 use std::{env, fs};
 use std::path::PathBuf;
@@ -9,9 +9,42 @@ use std::thread;
 use std::sync::Arc;
 use std::net::Shutdown;
 
-use psfsp::{ACK, AUTH, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
+use rcgen::generate_simple_self_signed;
+use rustls::{ServerConfig, ServerConnection, Stream};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<String>>, shared_directory: Arc<PathBuf>, username: Arc<String>, password: Arc<String>) -> std::io::Result<()> {
+use psfsp::{ACK, AUTH, BYE, DATA_CHUNK, FILE_INFO, GET, GREET, HASH, NOTEXIST, REDIRECTED, FAIL, hash};
+
+fn cert_handler() -> ServerConfig {
+    let home_dir = std::env::var("USERPROFILE") 
+        .or_else(|_| std::env::var("HOME"))     
+        .expect("could not find home dir");
+    let mut cert_dir = PathBuf::from(home_dir);
+    cert_dir.push(".psfsp");
+    fs::create_dir_all(&cert_dir).expect("failed to create directory for keys");
+    let cert_path = cert_dir.join("server.crt");
+    let key_path = cert_dir.join("server.key");
+
+    if !cert_path.exists() || !key_path.exists() {
+        let subject_alt_names = vec!["psfsp".to_string()];
+        let certified_key = generate_simple_self_signed(subject_alt_names).expect("failed to generate TLS certificates");
+
+        File::create(&cert_path).unwrap().write_all(certified_key.cert.pem().as_bytes()).unwrap();
+        File::create(&key_path).unwrap().write_all(certified_key.signing_key.serialize_pem().as_bytes()).unwrap();
+    }
+
+    let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(cert_path).unwrap()))
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(key_path).unwrap()))
+        .unwrap().unwrap();
+
+    ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("failed to build ServerConfig")
+}
+
+fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<String>>, shared_directory: Arc<PathBuf>, username: Arc<String>, password: Arc<String>, tls_conf: Arc<ServerConfig>) -> std::io::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:0")?;
     let new_port = listener.local_addr()?.port();
     println!("got new temp port {}", new_port);
@@ -20,7 +53,9 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
     let client_ip = first_stream.peer_addr()?.ip();
     first_stream.write_all(&redirection)?;
     drop(first_stream);
-    let (mut stream, client_addr) = listener.accept()?;
+    let (mut rawstream, client_addr) = listener.accept()?;
+    let mut server_conn = ServerConnection::new(tls_conf).unwrap();
+    let mut stream = Stream::new(&mut server_conn, &mut rawstream);
     let new_client_ip = client_addr.ip();
     if new_client_ip != client_ip {
         return  Err(Error::new(std::io::ErrorKind::PermissionDenied, "client attempted to connect that had a seperate ip from the initial one"));
@@ -33,7 +68,28 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
     if auth_first_byte != AUTH {
         return Err(Error::new(std::io::ErrorKind::InvalidInput, "Client did not send an AUTH packet back"));
     }
-    let username_len = u64::from_be_bytes(buffer[1..9].try_into().unwrap()) as usize;
+    let username_len = buffer[1] as usize;
+    let username_end = username_len + 2;
+    if username_end + 1 > buffer.len() {
+        return Err(Error::new(std::io::ErrorKind::InvalidData, "Malformed packet"));
+    }
+    let pass_len_index = username_end + 8;
+    let c_username = String::from_utf8_lossy(&buffer[2..username_end]);
+    let password_len = buffer[username_end] as usize;
+    let password_start = username_end + 1;
+    let password_end = password_len + password_start;
+    if password_end > buffer.len() {
+        return Err(Error::new(std::io::ErrorKind::InvalidData, "Malformed packet"));
+    }
+    let c_password = String::from_utf8_lossy(&buffer[password_start..password_end]);
+    if c_username != *username || c_password != *password {
+        println!("Client tried to auth with incorrect credentials\nUsername: {}\nPassword: {}", c_username, c_password);
+        stream.write_all(&[FAIL])?;
+        rawstream.shutdown(Shutdown::Write)?;
+        return Err(Error::new(std::io::ErrorKind::PermissionDenied, "client tried to auth with incorrect credentials"));
+    }
+    stream.write_all(&[ACK])?;
+    println!("authenticated succesfully");
     stream.read(&mut buffer)?;
     let first_byte = buffer[0];
     let filename_len = buffer[1] as usize;
@@ -82,7 +138,7 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
         hash_packet.extend(hash_server.as_bytes());
         stream.write_all(&[BYE])?;
         stream.write_all(&hash_packet)?;
-        stream.shutdown(Shutdown::Write)?;
+        rawstream.shutdown(Shutdown::Write)?;
     } else {
        return Err(Error::new(std::io::ErrorKind::InvalidData, "Invalid command"));
     }
@@ -90,6 +146,8 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
 }
 
 fn main() -> std::io::Result<()> {
+    println!("verifying tls certificates");
+    let tls_conf = Arc::new(cert_handler());
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
         panic!("no arguments were provided\nusage:\nserver.exe [SHARED_DIRECTORY] [USERNAME] [PASSWORD]");
@@ -123,6 +181,7 @@ fn main() -> std::io::Result<()> {
         let shared_dir_clone = Arc::clone(&shared_dir_arc);
         let username_clone = Arc::clone(&username_arc);
         let password_clone = Arc::clone(&password_arc);
+        let tls_conf_clone = Arc::clone(&tls_conf);
         thread::spawn(|| {
             let mut stream = match stream {
                 Ok(s) => s,
@@ -148,7 +207,7 @@ fn main() -> std::io::Result<()> {
                 println!("client sent incorrect magic byte");
                 return;
             }
-            match handle_client(stream, available_files_clone, shared_dir_clone, username_clone, password_clone) {
+            match handle_client(stream, available_files_clone, shared_dir_clone, username_clone, password_clone, tls_conf_clone) {
                 Ok(_) => println!("client has been served"),
                 Err(e) => eprintln!("{}", e),
             }

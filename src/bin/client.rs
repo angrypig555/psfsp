@@ -7,11 +7,68 @@ use std::net::TcpStream;
 use std::env;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use psfsp::AUTH;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, Stream, DigitallySignedStruct};
 
 use psfsp::BYE;
 use psfsp::HASH;
 use psfsp::hash;
 use psfsp::{GET, GREET, NOTEXIST, ACK, FAIL};
+
+#[derive(Debug)]
+struct BlindTrustVerifier;
+
+impl ServerCertVerifier for BlindTrustVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer,
+        _intermediates: &[CertificateDer],
+        _server_name: &ServerName,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+        ]
+    }
+}
+
+fn load_client_tls_config() -> ClientConfig {
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth();
+
+    config.dangerous().set_certificate_verifier(Arc::new(BlindTrustVerifier));
+    config
+}
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -32,7 +89,40 @@ fn main() -> std::io::Result<()> {
     let bytes = [buffer[1], buffer[2]];
     let redirected_port = u16::from_be_bytes(bytes);
     println!("new port is {}", redirected_port);
-    let mut stream = TcpStream::connect(format!("{}:{}", ip, redirected_port))?;
+    let mut rawstream = TcpStream::connect(format!("{}:{}", ip, redirected_port))?;
+    let tls_config = Arc::new(load_client_tls_config());
+    let dummy_name = ServerName::try_from("psfsp.internal").unwrap().to_owned();
+    let mut client_conn = ClientConnection::new(tls_config, dummy_name)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let mut stream = Stream::new(&mut client_conn, &mut rawstream);
+    stream.read(&mut buffer)?;
+    if buffer[0] == AUTH {
+        print!("Authentication required\nUsername: ");
+        io::stdout().flush()?;
+        let mut username = String::new();
+        io::stdin().read_line(&mut username).unwrap();
+        print!("Password: ");
+        io::stdout().flush()?;
+        let mut password = String::new();
+        io::stdin().read_line(&mut password).unwrap();
+        let mut auth_packet = Vec::new();
+        auth_packet.push(AUTH);
+        let username_len = username.trim().len();
+        let password_len = password.trim().len();
+        auth_packet.push(username_len.try_into().unwrap());
+        auth_packet.extend(username.trim().as_bytes());
+        auth_packet.push(password_len.try_into().unwrap());
+        auth_packet.extend(password.trim().as_bytes());
+        println!("please wait...");
+        stream.write_all(&auth_packet)?;
+        stream.read(&mut buffer)?;
+        if buffer[0] == ACK {
+            println!("succesfully authenticated");
+        } else {
+            return Err(Error::new(std::io::ErrorKind::PermissionDenied, "Authentication failed"))
+        }
+        
+    }
     let mut get_packet = Vec::new();
     get_packet.push(GET);
     let filename_len = filename.len();
