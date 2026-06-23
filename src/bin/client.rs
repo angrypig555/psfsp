@@ -275,6 +275,7 @@ fn main() -> std::io::Result<()> {
             "3" => {
                 println!("goodbye");
                 stream.write_all(&[BYE])?;
+                stream.conn.send_close_notify();
                 break Ok(());
             }
             _ => continue

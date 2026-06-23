@@ -166,11 +166,14 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
 
         } else if first_byte == BYE {
             println!("client finished session");
+            let _ = stream.flush();
             break
         } else {
             return Err(Error::new(std::io::ErrorKind::InvalidData, "Invalid command"));
         }
     }
+    stream.conn.send_close_notify();
+    let _ = stream.flush();
     rawstream.shutdown(Shutdown::Write)?;
     Ok(())
 }
