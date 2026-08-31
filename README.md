@@ -28,6 +28,15 @@ You can download a prebuilt executable for linux, windows and macOS from the rel
 > [!IMPORTANT]
 > This has only been tested on windows and linux, technically it should work on macOS but it is not guaranteed
 
+### Arguments
+Client:
+`client [server_ip] [download_directory]`
+
+Server:
+`server [shared_directory] [username] [password]`
+
+All arguments are required and they must be in the correct order
+
 ## :robot: AI Notice
 Some AI was used to help with debugging the code.
 This readme was not written by AI.
