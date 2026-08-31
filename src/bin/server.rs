@@ -13,7 +13,7 @@ use rcgen::generate_simple_self_signed;
 use rustls::{ServerConfig, ServerConnection, Stream};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-use psfsp::{ACK, AUTH, AVAILABLE, BYE, DATA_CHUNK, FAIL, FILE_INFO, FILE_METADATA, GET, GREET, HASH, NOTEXIST, REDIRECTED, hash};
+use psfsp::{ACK, AUTH, AVAILABLE, BYE, DATA_CHUNK, FAIL, FILE_INFO, FILE_METADATA, GET, GREET, HASH, NOTEXIST, REDIRECTED, UP, hash};
 
 fn cert_handler() -> ServerConfig {
     let home_dir = std::env::var("USERPROFILE") 
@@ -164,6 +164,60 @@ fn handle_client(mut first_stream: TcpStream, available_files: Arc<HashSet<Strin
                 stream.read(&mut buffer)?;
             }
 
+        } else if first_byte == UP {
+            println!("download from client starting");
+            let num_of_chunks = u64::from_be_bytes(buffer[1..9].try_into().unwrap());
+            let filename_len = u64::from_be_bytes(buffer[9..17].try_into().unwrap()) as usize;
+            let filename = String::from_utf8_lossy(&buffer[17..17+filename_len]).to_string();
+            println!("downloading {} from client", filename);
+            let file_path = PathBuf::from(filename.to_string());
+            stream.write_all(&[ACK])?;
+            let mut downloaded_file = (*shared_directory).clone();
+            downloaded_file.push(&filename);
+            downloaded_file.set_extension("part");
+            let mut downloaded_file_final_name = (*shared_directory).clone();
+            downloaded_file_final_name.push(&filename);
+            if downloaded_file_final_name.exists() {
+                println!("file {} already exists, aborting download", filename);
+                stream.write_all(&[FAIL])?;
+                return Err(Error::new(std::io::ErrorKind::AlreadyExists, "File already exists"))
+            }
+            let mut file = File::create(&*downloaded_file)?;
+            let mut file_buffer_d = [0u8; 51200];
+            let mut bytes_received = 0;
+            while bytes_received < num_of_chunks {
+                let remaining = num_of_chunks - bytes_received;
+                let max_to_read = std::cmp::min(file_buffer_d.len() as u64, remaining) as usize;
+                let bytes_read = stream.read(&mut file_buffer_d[..max_to_read])?;
+                if bytes_read == 0 {
+                    return Err(Error::new(std::io::ErrorKind::UnexpectedEof, "Server dropped the connection"));
+                }
+                file.write_all(&file_buffer_d[..bytes_read])?;
+                bytes_received += bytes_read as u64;
+                stream.write_all(&[ACK])?;
+            }
+            fs::rename(downloaded_file.as_path(), &downloaded_file_final_name)?;
+            println!("verifying hash");
+            let client_hash = hash(&downloaded_file_final_name);
+            stream.read(&mut buffer)?;
+            if buffer[0] != HASH {
+                println!("File was saved but the hash was not compared, procceed at your own risk");
+            }
+            let buf_len  = u64::from_be_bytes(buffer[1..9].try_into().unwrap()) as usize;
+            let end_index = 9 + buf_len;
+            let server_hash = &buffer[9..end_index];
+            let server_hash_string = String::from_utf8_lossy(server_hash);
+            println!("Downloaded file hash: {}\nHash from server: {}", client_hash, server_hash_string);
+            if client_hash != server_hash_string {
+                println!("hashes invalid, deleting file for safety");
+                let mut final_file = PathBuf::from(downloaded_file);
+                final_file.push(filename);
+                fs::remove_file(final_file)?;
+                return Err(Error::new(std::io::ErrorKind::InvalidData, "Hashes do not match, file was deleted for safety"))
+            } else {
+                println!("Hashes verified")
+            }
+            println!("Saved file to {}", downloaded_file_final_name.display());
         } else if first_byte == BYE {
             println!("client finished session");
             let _ = stream.flush();

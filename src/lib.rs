@@ -22,7 +22,7 @@ pub const DATA_CHUNK: u8 = 0x01;
 pub const HASH_CHUNK: u8 = 0x05;
 /// Layout:
 /// 1 B   8B 
-/// 0x02 number_of_chunks len hash
+/// 0x02 number_of_chunks
 /// Sends the number of chunks and the hash of the file
 pub const FILE_INFO: u8 = 0x02;
 /// Layout:
@@ -68,7 +68,10 @@ pub const AVAILABLE: u8 = 0xA2;
 /// 1 byte - 8 bytes - 8 bytes - len
 /// Client responds with ACK
 pub const FILE_METADATA: u8 = 0x65;
-
+/// Layout:
+/// 0x62 number_of_chunks len FILENAME
+/// Server responds with ACK or FAIL
+pub const UP: u8 = 0x62;
 /// Hashes a file, returns the hash as a string
 pub fn hash(path: &Path) -> String {
     let mut file = match File::open(path) {

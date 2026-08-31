@@ -7,6 +7,7 @@ use std::io::prelude::*;
 use std::net::TcpStream;
 use std::env;
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use indicatif::ProgressBar;
 
 use psfsp::AUTH;
 use psfsp::AVAILABLE;
+use psfsp::UP;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, Stream, DigitallySignedStruct};
@@ -131,7 +133,7 @@ fn main() -> std::io::Result<()> {
     println!("psfsp example client");
     loop {
         println!("please select what you would like to do");
-        print!("[1] query available files\n[2] download a file\n[3] exit\n");
+        print!("[1] query available files\n[2] download a file\n[3] upload a file\n[4] exit\n");
         io::stdout().flush()?;
         let mut option_raw = String::new();
         io::stdin().read_line(&mut option_raw).unwrap();
@@ -273,6 +275,56 @@ fn main() -> std::io::Result<()> {
                 println!("Saved file to {}", downloaded_file_final_name.display());
             }
             "3" => {
+                print!("please enter path to file: ");
+                io::stdout().flush()?;
+                let mut filename_raw = String::new();
+                io::stdin().read_line(&mut filename_raw).unwrap();
+                let file_path = PathBuf::from(filename_raw.trim());
+                if !file_path.exists() {
+                    eprintln!("file not found");
+                    continue;
+                }
+                let filename = file_path.file_name().unwrap().to_str().unwrap().to_string();
+                let metadata = fs::metadata(&file_path)?;
+                let file_len = metadata.len();
+                let chunks = file_len;
+                let chunk_bytes: [u8; 8] = chunks.to_be_bytes();
+                let mut f_upload_packet: Vec<u8> = Vec::new();
+                f_upload_packet.push(UP);
+                f_upload_packet.extend(chunk_bytes);
+                f_upload_packet.extend_from_slice(&(filename.len() as u64).to_be_bytes());
+                f_upload_packet.extend_from_slice(filename.as_bytes());
+                stream.write_all(&f_upload_packet)?;
+                stream.read(&mut buffer)?;
+                if buffer[0] != ACK {
+                    return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "server denied upload, file already exists?"));
+                }
+                let mut file = File::open(&file_path)?;
+                let mut f_buffer = vec![0u8; 51200];
+                println!("sending file to server...");
+                loop {
+                    let bytes_read = file.read(&mut f_buffer)?;
+                    if bytes_read == 0 {
+                        break
+                    }
+                    let current_chunk = &f_buffer[..bytes_read];
+                    stream.write_all(current_chunk)?;
+                    stream.read(&mut buffer)?;
+                    if buffer[0] != ACK {
+                        return Err(Error::new(std::io::ErrorKind::ConnectionAborted, "server aborted upload, file already exists?"));
+                    }
+                }
+                println!("calculating hash");
+                let hash_server = hash(&file_path);
+                let hash_len = hash_server.len().to_be_bytes();
+                let mut hash_packet: Vec<u8> = Vec::new();
+                hash_packet.push(HASH);
+                hash_packet.extend(hash_len);
+                hash_packet.extend(hash_server.as_bytes());
+                println!("hashes sent to server, query files to see if hash verification was succesful");
+                stream.write_all(&hash_packet)?;
+            }
+            "4" => {
                 println!("goodbye");
                 stream.write_all(&[BYE])?;
                 stream.conn.send_close_notify();
