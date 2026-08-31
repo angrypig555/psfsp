@@ -9,6 +9,9 @@ After the client is transferred, it can query files and initiate a download or u
 Clients who don't authenticate are automatically ignored
 
 ## How do i run this?
+> [!NOTE]
+> Due to how the GUI works, sometimes it throws errors even when it succeded, always double check if your download succeded!
+
 psfsp requires no external dependencies.
 You can follow either options to run psfsp
 

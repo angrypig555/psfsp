@@ -1,3 +1,4 @@
 /target
 *.txt
 /testing
+compressed_out/
