@@ -1,7 +1,11 @@
 [package]
 name = "psfsp"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT"
+description = "A simple filesharing server"
+repository = "https://github.com/angrypig555/psfsp"
+readme = "README.md"
 
 [dependencies]
 blake3 = "1.8.5"
