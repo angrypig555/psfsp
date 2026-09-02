@@ -28,6 +28,13 @@ You can download a prebuilt executable for linux, windows and macOS from the rel
 > [!IMPORTANT]
 > This has only been tested on windows and linux, technically it should work on macOS but it is not guaranteed
 
+### 💾 Option C, Download from crates.io
+The client and the server binaries can be downloaded from crates.io by running
+
+`cargo install psfsp`
+
+The GUI has to be built manually because it requires the system webview libraries.
+
 ### Arguments
 Client:
 `client [server_ip] [download_directory]`
