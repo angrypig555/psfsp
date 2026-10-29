@@ -31,7 +31,7 @@ then you can build the gui
 ### Option B, Download the prebuilt executable
 you can download a prebuilt executable for linux, windows and macos from the releases page
 > [!IMPORTANT]
-> only tested on windows and linux, compatibility not guaranteed for macos
+> only tested on linux, may not work on windows and macos
 > 
 ### Option C, Download from crates.io
 both the client and server are uploaded to crates.io and can be installed by running
